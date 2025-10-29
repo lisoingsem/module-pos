@@ -1,14 +1,30 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Modules\POS\Providers;
 
-use Illuminate\Support\Facades\Blade;
+use Illuminate\Database\Eloquent\Relations\Relation;
+use Illuminate\Routing\Router;
 use Illuminate\Support\ServiceProvider;
+use Modules\POS\Contracts\CashMovementContract;
+use Modules\POS\Contracts\PrinterContract;
+use Modules\POS\Contracts\ShiftContract;
+use Modules\POS\Contracts\TerminalContract;
+use Modules\POS\Http\Middleware\POSMenuMiddleware;
+use Modules\POS\Models\CashMovement;
+use Modules\POS\Models\Printer;
+use Modules\POS\Models\Shift;
+use Modules\POS\Models\Terminal;
+use Modules\POS\Repositories\CashMovementRepository;
+use Modules\POS\Repositories\PrinterRepository;
+use Modules\POS\Repositories\ShiftRepository;
+use Modules\POS\Repositories\TerminalRepository;
 use Nwidart\Modules\Traits\PathNamespace;
 use RecursiveDirectoryIterator;
 use RecursiveIteratorIterator;
 
-class POSServiceProvider extends ServiceProvider
+final class POSServiceProvider extends ServiceProvider
 {
     use PathNamespace;
 
@@ -26,7 +42,14 @@ class POSServiceProvider extends ServiceProvider
         $this->registerTranslations();
         $this->registerConfig();
         $this->registerViews();
+        $this->registerPolymorphicRelations();
         $this->loadMigrationsFrom(module_path($this->name, 'database/migrations'));
+
+        // Register middleware after the application is fully booted
+        $this->app->booted(function (): void {
+            $router = $this->app->make(Router::class);
+            $router->pushMiddlewareToGroup('dashboard', POSMenuMiddleware::class);
+        });
     }
 
     /**
@@ -34,8 +57,68 @@ class POSServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
-        $this->app->register(EventServiceProvider::class);
+        // EventServiceProvider disabled - events registered in main app EventServiceProvider
+        // $this->app->register(EventServiceProvider::class);
         $this->app->register(RouteServiceProvider::class);
+
+        // Register Contract bindings
+        $this->registerRepositories();
+    }
+
+    /**
+     * Register translations.
+     */
+    public function registerTranslations(): void
+    {
+        $langPath = resource_path('lang/modules/' . $this->nameLower);
+
+        if (is_dir($langPath)) {
+            $this->loadTranslationsFrom($langPath, $this->nameLower);
+            $this->loadJsonTranslationsFrom($langPath);
+        } else {
+            $this->loadTranslationsFrom(module_path($this->name, 'resources/lang'), $this->nameLower);
+            $this->loadJsonTranslationsFrom(module_path($this->name, 'resources/lang'));
+        }
+    }
+
+    /**
+     * Register views.
+     */
+    public function registerViews(): void
+    {
+        $viewPath = resource_path('views/modules/' . $this->nameLower);
+
+        $sourcePath = module_path($this->name, 'resources/views');
+
+        // Only register views if the views directory exists
+        if (is_dir($sourcePath)) {
+            $this->publishes([
+                $sourcePath => $viewPath,
+            ], ['views', $this->nameLower . '-module-views']);
+
+            $this->loadViewsFrom(array_merge($this->getPublishableViewPaths(), [$sourcePath]), $this->nameLower);
+        }
+    }
+
+    /**
+     * Get the services provided by the provider.
+     */
+    public function provides(): array
+    {
+        return [];
+    }
+
+    /**
+     * Register the Polymorphic relations for the POS models.
+     */
+    public function registerPolymorphicRelations(): void
+    {
+        Relation::enforceMorphMap([
+            'pos_terminal' => Terminal::class,
+            'pos_shift' => Shift::class,
+            'pos_cash_movement' => CashMovement::class,
+            'pos_printer' => Printer::class,
+        ]);
     }
 
     /**
@@ -58,94 +141,46 @@ class POSServiceProvider extends ServiceProvider
     }
 
     /**
-     * Register translations.
-     */
-    public function registerTranslations(): void
-    {
-        $langPath = resource_path('lang/modules/'.$this->nameLower);
-
-        if (is_dir($langPath)) {
-            $this->loadTranslationsFrom($langPath, $this->nameLower);
-            $this->loadJsonTranslationsFrom($langPath);
-        } else {
-            $this->loadTranslationsFrom(module_path($this->name, 'resources/lang'), $this->nameLower);
-            $this->loadJsonTranslationsFrom(module_path($this->name, 'resources/lang'));
-        }
-    }
-
-    /**
      * Register config.
      */
     protected function registerConfig(): void
     {
-        $configPath = module_path($this->name, config('modules.paths.generator.config.path'));
+        $relativeConfigPath = config('modules.paths.generator.config.path');
+        $configPath = module_path($this->name, $relativeConfigPath);
 
         if (is_dir($configPath)) {
             $iterator = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($configPath));
 
             foreach ($iterator as $file) {
-                if ($file->isFile() && $file->getExtension() === 'php') {
-                    $config = str_replace($configPath.DIRECTORY_SEPARATOR, '', $file->getPathname());
-                    $config_key = str_replace([DIRECTORY_SEPARATOR, '.php'], ['.', ''], $config);
-                    $segments = explode('.', $this->nameLower.'.'.$config_key);
+                if ($file->isFile() && 'php' === $file->getExtension()) {
+                    $relativePath = str_replace($configPath . DIRECTORY_SEPARATOR, '', $file->getPathname());
+                    $configKey = $this->nameLower . '.' . str_replace([DIRECTORY_SEPARATOR, '.php'], ['.', ''], $relativePath);
+                    $key = ('config.php' === $relativePath) ? $this->nameLower : $configKey;
 
-                    // Remove duplicated adjacent segments
-                    $normalized = [];
-                    foreach ($segments as $segment) {
-                        if (end($normalized) !== $segment) {
-                            $normalized[] = $segment;
-                        }
-                    }
-
-                    $key = ($config === 'config.php') ? $this->nameLower : implode('.', $normalized);
-
-                    $this->publishes([$file->getPathname() => config_path($config)], 'config');
-                    $this->merge_config_from($file->getPathname(), $key);
+                    $this->publishes([$file->getPathname() => config_path($relativePath)], 'config');
+                    $this->mergeConfigFrom($file->getPathname(), $key);
                 }
             }
         }
     }
 
     /**
-     * Merge config from the given path recursively.
+     * Register repository bindings.
      */
-    protected function merge_config_from(string $path, string $key): void
+    private function registerRepositories(): void
     {
-        $existing = config($key, []);
-        $module_config = require $path;
-
-        config([$key => array_replace_recursive($existing, $module_config)]);
-    }
-
-    /**
-     * Register views.
-     */
-    public function registerViews(): void
-    {
-        $viewPath = resource_path('views/modules/'.$this->nameLower);
-        $sourcePath = module_path($this->name, 'resources/views');
-
-        $this->publishes([$sourcePath => $viewPath], ['views', $this->nameLower.'-module-views']);
-
-        $this->loadViewsFrom(array_merge($this->getPublishableViewPaths(), [$sourcePath]), $this->nameLower);
-
-        Blade::componentNamespace(config('modules.namespace').'\\' . $this->name . '\\View\\Components', $this->nameLower);
-    }
-
-    /**
-     * Get the services provided by the provider.
-     */
-    public function provides(): array
-    {
-        return [];
+        $this->app->bind(TerminalContract::class, TerminalRepository::class);
+        $this->app->bind(ShiftContract::class, ShiftRepository::class);
+        $this->app->bind(CashMovementContract::class, CashMovementRepository::class);
+        $this->app->bind(PrinterContract::class, PrinterRepository::class);
     }
 
     private function getPublishableViewPaths(): array
     {
         $paths = [];
         foreach (config('view.paths') as $path) {
-            if (is_dir($path.'/modules/'.$this->nameLower)) {
-                $paths[] = $path.'/modules/'.$this->nameLower;
+            if (is_dir($path . '/modules/' . $this->nameLower)) {
+                $paths[] = $path . '/modules/' . $this->nameLower;
             }
         }
 

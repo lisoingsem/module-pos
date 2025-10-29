@@ -1,11 +1,13 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Modules\POS\Http\Controllers;
 
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 
-class POSController extends Controller
+final class POSController extends Controller
 {
     /**
      * Display a listing of the resource.
@@ -26,7 +28,7 @@ class POSController extends Controller
     /**
      * Store a newly created resource in storage.
      */
-    public function store(Request $request) {}
+    public function store(Request $request): void {}
 
     /**
      * Show the specified resource.
@@ -47,10 +49,10 @@ class POSController extends Controller
     /**
      * Update the specified resource in storage.
      */
-    public function update(Request $request, $id) {}
+    public function update(Request $request, $id): void {}
 
     /**
      * Remove the specified resource from storage.
      */
-    public function destroy($id) {}
+    public function destroy($id): void {}
 }

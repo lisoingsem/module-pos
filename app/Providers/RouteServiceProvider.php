@@ -1,11 +1,15 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Modules\POS\Providers;
 
 use Illuminate\Foundation\Support\Providers\RouteServiceProvider as ServiceProvider;
 use Illuminate\Support\Facades\Route;
+use Mcamara\LaravelLocalization\Facades\LaravelLocalization;
+use Modules\Order\Models\Order;
 
-class RouteServiceProvider extends ServiceProvider
+final class RouteServiceProvider extends ServiceProvider
 {
     protected string $name = 'POS';
 
@@ -17,6 +21,9 @@ class RouteServiceProvider extends ServiceProvider
     public function boot(): void
     {
         parent::boot();
+
+        // Explicit Route Model Binding for Order model
+        Route::bind('order', fn (string $value) => Order::findOrFail($value));
     }
 
     /**
@@ -26,6 +33,7 @@ class RouteServiceProvider extends ServiceProvider
     {
         $this->mapApiRoutes();
         $this->mapWebRoutes();
+        $this->mapDashboardRoutes();
     }
 
     /**
@@ -35,7 +43,23 @@ class RouteServiceProvider extends ServiceProvider
      */
     protected function mapWebRoutes(): void
     {
-        Route::middleware('web')->group(module_path($this->name, '/routes/web.php'));
+        $webRoutePath = module_path($this->name, '/routes/web.php');
+        if (file_exists($webRoutePath)) {
+            Route::middleware('web')->group($webRoutePath);
+        }
+    }
+
+    /**
+     * Define the "dashboard" routes for the application.
+     *
+     * These routes all receive session state, CSRF protection, etc.
+     */
+    protected function mapDashboardRoutes(): void
+    {
+        Route::middleware(['web', 'dashboard', 'auth:dashboard', 'dashboard.authenticated'])
+            ->prefix(LaravelLocalization::setLocale() . '/dashboard')
+            ->name('dashboard.')
+            ->group(module_path($this->name, '/routes/dashboard.php'));
     }
 
     /**
@@ -45,6 +69,9 @@ class RouteServiceProvider extends ServiceProvider
      */
     protected function mapApiRoutes(): void
     {
-        Route::middleware('api')->prefix('api')->name('api.')->group(module_path($this->name, '/routes/api.php'));
+        $apiRoutePath = module_path($this->name, '/routes/api.php');
+        if (file_exists($apiRoutePath)) {
+            Route::middleware('api')->prefix('api')->name('api.pos.')->group($apiRoutePath);
+        }
     }
 }

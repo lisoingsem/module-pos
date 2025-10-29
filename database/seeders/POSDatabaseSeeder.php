@@ -1,10 +1,12 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Modules\POS\Database\Seeders;
 
 use Illuminate\Database\Seeder;
 
-class POSDatabaseSeeder extends Seeder
+final class POSDatabaseSeeder extends Seeder
 {
     /**
      * Run the database seeds.

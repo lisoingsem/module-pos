@@ -1,11 +1,9 @@
 {
-    "name": "POS",
     "alias": "pos",
-    "description": "",
-    "keywords": [],
+    "description": "Point of Sale system for retail operations",
+    "files": [],
+    "keywords": ["pos", "point-of-sale", "cashier", "retail"],
+    "name": "POS",
     "priority": 0,
-    "providers": [
-        "Modules\\POS\\Providers\\POSServiceProvider"
-    ],
-    "files": []
+    "providers": ["Modules\\POS\\Providers\\POSServiceProvider"]
 }
